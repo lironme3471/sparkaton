@@ -297,6 +297,10 @@ function play(){
   runLine(0);
 }
 
+// Known clip durations (seconds) — used as the authoritative pacing so the
+// sequence ALWAYS advances even if an audio 'ended' event never fires.
+const LINE_DUR = {1:4.02,2:7.84,3:5.75,4:10.16,5:9.85,6:2.09,7:9.51,8:6.16,9:6.11,10:4.13};
+
 function runLine(idx){
   if(idx>=transcript.length){ endCall(); return; }
   const turn = transcript[idx];
@@ -307,27 +311,31 @@ function runLine(idx){
     if(s) addSuggestion(s);
   });
 
+  let advanced = false;
   const advance = ()=>{
-    // After line 4 (the "not a sales pitch" line), if Shield OFF, agent dismisses the trap
-    if(lineNo===4 && !shieldOn && !dismissedS2){
+    if(advanced) return; advanced = true;          // guard: fire exactly once
+    markActive(idx,false);
+    if(lineNo===4 && !shieldOn && !dismissedS2){     // trap dismissal beat
       const el=$("sug-s2"); if(el) doDismissS2(el);
     }
     timers.push(setTimeout(()=>runLine(idx+1), GAP));
   };
 
-  const clip = audioEls[lineNo];
-  if(audioOn && clip){
+  const clip = audioOn ? audioEls[lineNo] : null;
+  // Authoritative timer: clip duration if we have audio, else a read-pace timer.
+  const durMs = clip ? (LINE_DUR[lineNo]*1000 + 250) : NOAUDIO_LINE;
+  timers.push(setTimeout(advance, durMs));
+
+  if(clip){
     markActive(idx,true);
-    clip.muted=false; clip.currentTime=0; clip.volume=1;
-    clip.onended=()=>{ markActive(idx,false); advance(); };
-    const p = clip.play();
-    if(p && p.catch) p.catch(err=>{ // playback blocked or decode fail -> fall back to timer
-      if(lineNo===1){ $("audioState").innerHTML="&#9888; Click Play again to enable sound"; $("audioState").style.color="var(--coral)"; }
-      timers.push(setTimeout(()=>{ markActive(idx,false); advance(); }, NOAUDIO_LINE));
-    });
-  } else {
-    if(audioOn) speakFallback(turn);
-    timers.push(setTimeout(advance, NOAUDIO_LINE));
+    try{
+      clip.muted=false; clip.currentTime=0; clip.volume=1;
+      clip.onended = ()=>advance();                 // advance early if it ends first
+      const p = clip.play();
+      if(p && p.catch) p.catch(()=>{});             // ignore; the timer still advances
+    }catch(e){}
+  } else if(audioOn){
+    speakFallback(turn);
   }
 }
 
